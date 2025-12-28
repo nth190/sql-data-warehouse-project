@@ -1,3 +1,19 @@
+DROP PROCEDURE IF EXISTS bronze_dw.reset_bronze;
+DELIMITER $$
+CREATE PROCEDURE bronze_dw.reset_bronze()
+BEGIN
+  TRUNCATE TABLE bronze_dw.crm_cust_info;
+  TRUNCATE TABLE bronze_dw.crm_prd_info;
+  TRUNCATE TABLE bronze_dw.crm_sales_details;
+  TRUNCATE TABLE bronze_dw.erp_loc_a101;
+  TRUNCATE TABLE bronze_dw.erp_cust_az12;
+  TRUNCATE TABLE bronze_dw.erp_px_cat_g1v2;
+END$$
+DELIMITER ;
+
+
+
+
 DROP PROCEDURE IF EXISTS bronze_dw.check_bronze;
 
 DELIMITER $$
