@@ -18,3 +18,5 @@
 CALL load_bronze();
 CALL load_silver();
 CALL load_gold();
+
+CALL run_all_layers();
