@@ -37,6 +37,7 @@ Data Quality: Cleanse and resolve data quality issues prior to analysis.
 Integration: Combine both sources into a single, user-friendly data model designed for analytical queries.
 Scope: Focus on the latest dataset only; historization of data is not required.
 Documentation: Provide clear documentation of the data model to support both business stakeholders and analytics teams.
+<img width="834" height="509" alt="image" src="https://github.com/user-attachments/assets/aaae7cbd-4fa4-4c48-ae78-4e09a4e6bba7" />
 
 Repository Structure
 data-warehouse-project/
