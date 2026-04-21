@@ -9,7 +9,7 @@
 
    Notes:
      - Control tables are created once in control_dw (watermark, pipeline log, dq log)
-     - Bronze load is FULL load (as you decided)
+     - Bronze load is FULL load
      - Silver/Gold loads are INCREMENTAL using control_dw.ctrl_watermark
 ============================================================================= */
 
