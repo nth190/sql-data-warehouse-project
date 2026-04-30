@@ -1,12 +1,60 @@
-# Mac
+# macOS
 .DS_Store
-
-# Logs
-*.log
-
-# Python
-__pycache__/
 
 # IDE
 .vscode/
 .idea/
+
+# Python virtual environment
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# Logs
+logs/
+*.log
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Airflow local files
+airflow/logs/
+airflow/.astro/
+airflow/.env
+airflow/airflow.db
+airflow/webserver_config.py
+
+# dbt generated files
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+dbt/profiles.yml
+
+# Data files - block raw/heavy data by default
+*.csv
+*.xlsx
+*.parquet
+*.zip
+
+
+# Ignore generated/local folders anywhere in the project
+**/__pycache__/
+*.pyc
+**/.venv/
+**/target/
+**/dbt_packages/
+**/logs/
+
+# Local dbt copy used inside Airflow during local testing
+
+airflow/dbt/
+
+# Airflow example/test files
+airflow/dags/exampledag.py
+airflow/tests/

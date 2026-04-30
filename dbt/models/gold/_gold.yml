@@ -1,0 +1,115 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: "Customer dimension table with SCD Type 2 (historical tracking)"
+    columns:
+      - name: customer_key
+        description: "Surrogate key for customer dimension (unique per version)"
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "Business key - original customer ID from source"
+      - name: customer_number
+        description: "Customer number from CRM"
+      - name: first_name
+        description: "Customer first name"
+      - name: last_name
+        description: "Customer last name"
+      - name: country_code
+        description: "Country code"
+      - name: country_name
+        description: "Country name"
+      - name: region
+        description: "Geographic region"
+      - name: segment
+        description: "Customer segment"
+      - name: valid_from
+        description: "Start date when this version became effective"
+        tests:
+          - not_null
+      - name: valid_to
+        description: "End date when this version stopped being effective (9999-12-31 for current)"
+        tests:
+          - not_null
+      - name: is_current
+        description: "Flag indicating if this is the current version (true/false)"
+        tests:
+          - not_null
+
+  - name: dim_products
+    description: "Product dimension table with SCD Type 2 (historical tracking)"
+    columns:
+      - name: product_key
+        description: "Surrogate key for product dimension (unique per version)"
+        tests:
+          - unique
+          - not_null
+      - name: product_id
+        description: "Business key - original product ID from source"
+      - name: product_number
+        description: "Product number from CRM"
+      - name: product_name
+        description: "Product name"
+      - name: category_code
+        description: "Product category code"
+      - name: category_name
+        description: "Product category name"
+      - name: parent_category
+        description: "Parent category"
+      - name: valid_from
+        description: "Start date when this version became effective"
+        tests:
+          - not_null
+      - name: valid_to
+        description: "End date when this version stopped being effective"
+        tests:
+          - not_null
+      - name: is_current
+        description: "Flag indicating if this is the current version"
+        tests:
+          - not_null
+
+  - name: fact_sales
+    description: "Sales fact table - grain: one row per order + product + customer"
+    columns:
+      - name: sales_key
+        description: "Surrogate key for sales fact"
+        tests:
+          - unique
+          - not_null
+      - name: order_number
+        description: "Order number"
+        tests:
+          - not_null
+      - name: order_date
+        description: "Order date"
+        tests:
+          - not_null
+      - name: customer_key
+        description: "Foreign key to dim_customers (SCD2 - version at order_date)"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_key
+      - name: product_key
+        description: "Foreign key to dim_products (SCD2 - version at order_date)"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_products')
+              field: product_key
+      - name: quantity
+        description: "Quantity sold"
+        tests:
+          - not_null
+      - name: amount
+        description: "Unit amount"
+      - name: total_amount
+        description: "Total amount (quantity * amount)"
+      - name: created_at
+        description: "Timestamp when record was created in data warehouse"
+      - name: batch_id
+        description: "Batch ID for tracking ETL runs"
