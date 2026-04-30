@@ -3,100 +3,120 @@
 -- Purpose:
 --   Gold layer provides analytics-ready dimensional model (star schema).
 --
+-- Design:
+--   - Type-1 dimensions (current state only)
+--   - Fact table at order line grain
+--   - Surrogate keys in dimensions
+--   - Business keys used for upsert logic
+--
 -- Notes:
---   - Watermark / pipeline log / dq log live in control_dw (not created here).
---   - Unique keys enable upserts by business keys (ON DUPLICATE KEY UPDATE).
---   - Timestamps use DATETIME(6) for microseconds.
+--   - Watermark / pipeline / DQ logs live in control_dw
+--   - DATETIME(6) used for microsecond precision
 -- ============================================================================
 
 CREATE SCHEMA IF NOT EXISTS gold_dw;
+USE gold_dw;
 
--- ----------------------------------------------------------------------------
--- DIM_CUSTOMERS
+-- ============================================================================
+-- GOLD DIMENSION: gold_dw.dim_customers (SCD Type 2)
 -- Grain:
---   1 row = 1 customer (Type-1 / current view)
+--   1 row = 1 version of a customer (current or historical)
 -- Keys:
---   - Surrogate key: customer_key
---   - Business key (unique): customer_id (from CRM)
--- ----------------------------------------------------------------------------
+--   - Surrogate key: customer_key (PK)
+--   - Natural/business key: customer_id (from CRM)
+--   - SCD2 columns: effective_start_date, effective_end_date, is_current
+-- ============================================================================
+
+
 DROP TABLE IF EXISTS gold_dw.dim_customers;
 
 CREATE TABLE gold_dw.dim_customers (
-  customer_key      BIGINT AUTO_INCREMENT PRIMARY KEY,  -- surrogate key
+  -- Surrogate key (technical primary key)
+  customer_key        BIGINT AUTO_INCREMENT PRIMARY KEY,
 
-  customer_id       INT          NOT NULL,              -- business key (cst_id)
-  customer_number   VARCHAR(50)  NULL,                  -- cst_key
+  -- Natural/business key from source systems
+  customer_id         INT          NOT NULL,         -- maps to silver_dw.crm_cust_info.cst_id
+  customer_number     VARCHAR(50)  NULL,             -- cst_key
 
-  first_name        VARCHAR(100) NULL,
-  last_name         VARCHAR(100) NULL,
-  country           VARCHAR(100) NULL,
-  marital_status    VARCHAR(20)  NULL,
-  gender            VARCHAR(10)  NULL,
-  birthdate         DATE         NULL,
-  create_date       DATE         NULL,
+  -- Descriptive attributes
+  first_name          VARCHAR(100) NULL,
+  last_name           VARCHAR(100) NULL,
+  country             VARCHAR(100) NULL,
+  marital_status      VARCHAR(20)  NULL,
+  gender              VARCHAR(10)  NULL,
+  birthdate           DATE         NULL,
+  create_date         DATE         NULL,
 
-  -- Technical metadata (from Silver)
-  src_ingestion_ts  DATETIME(6)  NULL,
+  -- SCD Type 2 tracking
+  effective_start_date DATE        NOT NULL,         -- when this version became active
+  effective_end_date   DATE        NOT NULL,         -- when this version stopped being active
+  is_current           TINYINT(1)  NOT NULL DEFAULT 1,  -- 1 = current, 0 = historical
 
-  -- Enables upsert by business key
-  UNIQUE KEY uk_dim_customers_customer_id (customer_id),
+  -- Technical metadata (for lineage/troubleshooting)
+  src_ingestion_ts    DATETIME(6)  NULL,
 
-  -- Optional helpful index
-  INDEX idx_dim_customers_customer_number (customer_number)
+  -- Helpful indexes
+  INDEX idx_dim_customers_nk_current (customer_id, is_current),
+  INDEX idx_dim_customers_nk_range   (customer_id, effective_start_date, effective_end_date),
+  INDEX idx_dim_customers_number     (customer_number)
 );
 
--- ----------------------------------------------------------------------------
--- DIM_PRODUCTS
+
+-- ============================================================================
+-- GOLD DIMENSION: gold_dw.dim_products (SCD Type 2)
 -- Grain:
---   1 row = 1 product (active/current, Type-1)
+--   1 row = 1 version of a product (current or historical)
 -- Keys:
---   - Surrogate key: product_key
---   - Business key (unique): product_number (prd_key)
--- ----------------------------------------------------------------------------
+--   - Surrogate key: product_key (PK)
+--   - Natural/business key: product_number (from CRM)
+--   - SCD2 columns: effective_start_date, effective_end_date, is_current
+-- ============================================================================
+
+USE gold_dw;
+
 DROP TABLE IF EXISTS gold_dw.dim_products;
 
 CREATE TABLE gold_dw.dim_products (
-  product_key       BIGINT AUTO_INCREMENT PRIMARY KEY,  -- surrogate key
+  product_key          BIGINT AUTO_INCREMENT PRIMARY KEY,
+  product_id           INT          NOT NULL,
+  product_number       VARCHAR(50)  NOT NULL,
 
-  product_id        INT          NOT NULL,              -- prd_id
-  product_number    VARCHAR(50)  NULL,                  -- prd_key (business key)
-  product_name      VARCHAR(255) NULL,
+  product_name         VARCHAR(255) NULL,
+  category_id          VARCHAR(50)  NULL,
+  category             VARCHAR(255) NULL,
+  subcategory          VARCHAR(255) NULL,
+  maintenance          VARCHAR(255) NULL,
 
-  category_id       VARCHAR(50)  NULL,
-  category          VARCHAR(255) NULL,
-  subcategory       VARCHAR(255) NULL,
-  maintenance       VARCHAR(255) NULL,
+  cost                 DECIMAL(18,2) NULL,
+  product_line         VARCHAR(50)   NULL,
+  start_date           DATE          NULL,
 
-  cost              DECIMAL(18,2) NULL,
-  product_line      VARCHAR(50)   NULL,
-  start_date        DATE          NULL,
+  -- SCD2 tracking
+  effective_start_date DATE         NOT NULL,
+  effective_end_date   DATE         NOT NULL,
+  is_current           TINYINT(1)   NOT NULL DEFAULT 1,
 
-  -- Technical metadata (from Silver)
-  src_ingestion_ts  DATETIME(6)   NULL,
+  src_ingestion_ts     DATETIME(6)  NULL,
 
-  -- Enables upsert by business key
-  UNIQUE KEY uk_dim_products_product_number (product_number),
-
-  INDEX idx_dim_products_category (category_id)
+  UNIQUE KEY uk_dim_products_product_number (product_number, effective_start_date),
+  INDEX idx_dim_products_nk_current (product_number, is_current),
+  INDEX idx_dim_products_nk_range (product_number, effective_start_date, effective_end_date)
 );
 
 -- ----------------------------------------------------------------------------
--- FACT_SALES
+-- FACT_SALES (no line_number version)
 -- Grain:
---   1 row = 1 order line (order_number + line_number)
+--   1 row = 1 order_number + 1 product + 1 customer
 -- Keys:
---   - Business key (unique): (order_number, line_number)
+--   - Business key (unique): (order_number, product_key, customer_key)
 --   - Foreign keys (logical): product_key -> dim_products.product_key
---                            customer_key -> dim_customers.customer_key
+--                             customer_key -> dim_customers.customer_key
 -- ----------------------------------------------------------------------------
 DROP TABLE IF EXISTS gold_dw.fact_sales;
 
 CREATE TABLE gold_dw.fact_sales (
   -- Business key
   order_number      VARCHAR(50) NOT NULL,
-  line_number       INT         NOT NULL,
-
-  -- Dim surrogate keys
   product_key       BIGINT      NOT NULL,
   customer_key      BIGINT      NOT NULL,
 
@@ -113,17 +133,12 @@ CREATE TABLE gold_dw.fact_sales (
   -- Technical metadata (from Silver)
   src_ingestion_ts  DATETIME(6)  NULL,
 
-  -- Upsert key
-  UNIQUE KEY uk_fact_sales_order_line (order_number, line_number),
+  -- Upsert key: 1 order x 1 product x 1 customer
+  UNIQUE KEY uk_fact_sales_ord_prod_cust (order_number, product_key, customer_key),
 
   -- Helpful indexes for analytics queries
   INDEX idx_fact_sales_order_date (order_date),
   INDEX idx_fact_sales_customer (customer_key),
   INDEX idx_fact_sales_product (product_key)
 );
-
--- ALTER TABLE gold_dw.fact_sales
---   ADD CONSTRAINT fk_fact_sales_product
---     FOREIGN KEY (product_key) REFERENCES gold_dw.dim_products(product_key),
---   ADD CONSTRAINT fk_fact_sales_customer
---     FOREIGN KEY (customer_key) REFERENCES gold_dw.dim_customers(customer_key);
+SHOW FULL COLUMNS FROM gold_dw.dim_customers;

@@ -1,0 +1,157 @@
+version: 2
+
+models:
+  # --- Clean layer (1-1 với bronze sources, incremental upsert) ---
+
+  - name: int_crm_cust_info
+    description: "Cleaned CRM customer data. Grain: 1 row = 1 customer (cst_id). Watermark: cst_create_date."
+    columns:
+      - name: cst_id
+        description: "Customer ID (PK)"
+        tests:
+          - unique
+          - not_null
+      - name: cst_key
+        description: "Natural/business key"
+      - name: cst_firstname
+        description: "First name (trimmed)"
+      - name: cst_lastname
+        description: "Last name (trimmed)"
+      - name: cst_marital_status
+        description: "Marital status normalized: Single / Married / n/a"
+      - name: cst_gndr
+        description: "Gender normalized: Male / Female / n/a"
+      - name: cst_create_date
+        description: "Business create date from source"
+      - name: ingestion_ts
+        description: "Batch timestamp of this Silver load"
+
+  - name: int_crm_prd_info
+    description: "Cleaned CRM product data. Grain: 1 row = 1 product version (prd_id). Watermark: prd_start_dt."
+    columns:
+      - name: prd_id
+        description: "Product ID (PK)"
+        tests:
+          - unique
+          - not_null
+      - name: cat_id
+        description: "Category ID (FK to erp_px_cat_g1v2.id)"
+      - name: prd_key
+        description: "Product key (trimmed)"
+      - name: prd_nm
+        description: "Product name (trimmed)"
+      - name: prd_cost
+        description: "Product cost"
+      - name: prd_line
+        description: "Product line (trimmed)"
+      - name: prd_start_dt
+        description: "Business start date"
+      - name: prd_end_dt
+        description: "Business end date (NULL = active)"
+      - name: ingestion_ts
+        description: "Batch timestamp of this Silver load"
+
+  - name: int_sales
+    description: "Cleaned sales data. Grain: 1 row = 1 order line (sls_ord_num + sls_prd_key). Watermark: sls_order_dt."
+    columns:
+      - name: sls_ord_num
+        description: "Order number (part of composite PK)"
+        tests:
+          - not_null
+      - name: sls_prd_key
+        description: "Product key (part of composite PK)"
+        tests:
+          - not_null
+      - name: sls_cust_id
+        description: "Customer ID (FK to crm_cust_info)"
+      - name: sls_order_dt
+        description: "Order date (watermark column)"
+      - name: sls_ship_dt
+        description: "Ship date"
+      - name: sls_due_dt
+        description: "Due date"
+      - name: sls_sales
+        description: "Sales amount"
+      - name: sls_quantity
+        description: "Quantity sold"
+      - name: sls_price
+        description: "Unit price"
+      - name: ingestion_ts
+        description: "Batch timestamp of this Silver load"
+
+  - name: int_erp_cust_az12
+    description: "Cleaned ERP customer attributes. Grain: 1 row = 1 ERP customer (cid). Watermark: ingestion_ts."
+    columns:
+      - name: cid
+        description: "ERP customer ID (PK)"
+        tests:
+          - unique
+          - not_null
+      - name: bdate
+        description: "Birthdate"
+      - name: gen
+        description: "Gender from ERP (may differ from CRM)"
+      - name: ingestion_ts
+        description: "Pass-through of Bronze ingestion_ts (watermark)"
+
+  - name: int_erp_loc_a101
+    description: "Cleaned customer location data. Grain: 1 row = 1 customer (cid). Watermark: ingestion_ts."
+    columns:
+      - name: cid
+        description: "Customer ID (PK)"
+        tests:
+          - unique
+          - not_null
+      - name: cntry
+        description: "Country code/text (trimmed)"
+      - name: ingestion_ts
+        description: "Pass-through of Bronze ingestion_ts (watermark)"
+
+  - name: int_erp_px_cat_g1v2
+    description: "Cleaned product category mapping. Grain: 1 row = 1 category (id). Watermark: ingestion_ts."
+    columns:
+      - name: id
+        description: "Category ID (PK)"
+        tests:
+          - unique
+          - not_null
+      - name: cat
+        description: "Category (trimmed)"
+      - name: subcat
+        description: "Sub-category (trimmed)"
+      - name: maintenance
+        description: "Maintenance flag (trimmed)"
+      - name: ingestion_ts
+        description: "Pass-through of Bronze ingestion_ts (watermark)"
+
+  # --- Enrich layer (join các clean models lại) ---
+
+  - name: int_customers_enriched
+    description: "Customer data enriched with ERP birthdate, gender, and location."
+    columns:
+      - name: cst_id
+        description: "Customer ID"
+        tests:
+          - unique
+          - not_null
+      - name: cst_gndr
+        description: "Resolved gender: CRM wins, fallback to ERP"
+      - name: bdate
+        description: "Birthdate from ERP"
+      - name: cntry
+        description: "Country from ERP location"
+
+  - name: int_products_enriched
+    description: "Product data enriched with category information."
+    columns:
+      - name: prd_id
+        description: "Product ID"
+        tests:
+          - unique
+          - not_null
+      - name: cat
+        description: "Category"
+      - name: subcat
+        description: "Sub-category"
+      - name: maintenance
+        description: "Maintenance flag"

@@ -1,0 +1,117 @@
+version: 2
+
+sources:
+  - name: bronze_dw
+    description: "Raw data layer from source systems (CRM, ERP)"
+    schema: bronze_dw
+    tables:
+      - name: crm_cust_info
+        description: "Raw customer data from CRM system"
+        columns:
+          - name: cst_id
+            description: "Customer ID (primary key)"
+            tests:
+              - unique
+              - not_null
+          - name: cst_key
+            description: "Customer business key/number"
+          - name: cst_firstname
+            description: "Customer first name"
+          - name: cst_lastname
+            description: "Customer last name"
+          - name: cst_create_date
+            description: "Customer creation date"
+
+      - name: crm_prd_info
+        description: "Raw product data from CRM system"
+        columns:
+          - name: prd_id
+            description: "Product ID (primary key)"
+            tests:
+              - unique
+              - not_null
+          - name: prd_number
+            description: "Product business key/number"
+          - name: prd_name
+            description: "Product name"
+          - name: prd_create_date
+            description: "Product creation date"
+
+      - name: crm_sales_details
+        description: "Raw sales transaction data from CRM"
+        columns:
+          - name: sls_ord_num
+            description: "Order number (PK part 1)"
+            tests:
+              - not_null
+          - name: sls_prd_key
+            description: "Product key (PK part 2)"
+            tests:
+              - not_null
+          - name: sls_cust_id
+            description: "Customer ID (FK to crm_cust_info)"
+          - name: sls_order_dt
+            description: "Order date (watermark)"
+          - name: sls_ship_dt
+            description: "Ship date"
+          - name: sls_due_dt
+            description: "Due date"
+          - name: sls_sales
+            description: "Sales amount"
+          - name: sls_quantity
+            description: "Quantity sold"
+          - name: sls_price
+            description: "Unit price"
+
+      - name: erp_cust_az12
+        description: "ERP customer attributes"
+        columns:
+          - name: cid
+            description: "ERP customer ID (PK)"
+            tests:
+              - not_null
+          - name: bdate
+            description: "Birthdate"
+          - name: gen
+            description: "Gender"
+          - name: ingestion_ts
+            description: "Bronze ingestion timestamp (watermark)"
+
+      - name: erp_loc_a101
+        description: "Customer location data from ERP"
+        columns:
+          - name: cid
+            description: "Customer ID (PK)"
+            tests:
+              - not_null
+          - name: cntry
+            description: "Country code/text"
+          - name: ingestion_ts
+            description: "Bronze ingestion timestamp (watermark)"
+
+      - name: erp_px_cat_g1v2
+        description: "Product category master data from ERP"
+        columns:
+          - name: id
+            description: "Category ID (PK)"
+            tests:
+              - not_null
+          - name: cat
+            description: "Category"
+          - name: subcat
+            description: "Sub-category"
+          - name: maintenance
+            description: "Maintenance flag"
+          - name: ingestion_ts
+            description: "Bronze ingestion timestamp (watermark)"
+
+  - name: control_dw
+    description: "Control and metadata tables"
+    schema: control_dw
+    tables:
+      - name: ctrl_watermark
+        description: "Watermark table for incremental loads"
+      - name: ctrl_pipeline_log
+        description: "Pipeline execution logs"
+      - name: ctrl_dq_log
+        description: "Data quality check logs"

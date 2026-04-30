@@ -1,124 +1,190 @@
 -- ============================================================================
--- bronze_dw.02_load_bronze.sql
+-- silver_dw.01_ddl_silver.sql
 -- Purpose:
---   Full load raw files into Bronze tables (truncate + reload).
+--   Silver layer stores cleaned, conformed data for downstream Gold models.
+--   - One schema: silver_dw
+--   - One table per business entity, with clear primary/unique keys
+--   - ingestion_ts used as batch timestamp for incremental logic
 --
--- How to use:
---   1) Update the file paths below to match your local environment.
---   2) Run this script in MySQL 8.0+ with LOCAL INFILE enabled.
---
--- Notes:
---   - ingestion_ts is set to the same @run_ts for all tables in the run.
---   - '0000-00-00' date strings are converted to NULL to avoid invalid dates.
+-- Design choices:
+--   - dwh_create_ts: when the row was first created in Silver
+--   - last_updated_ts: when the row was last updated in Silver
+--   - ingestion_ts: batch timestamp coming from the load process
 -- ============================================================================
 
--- Generate a run identifier for logging (simple + MySQL-native)
-SET @run_id := UUID_SHORT();
-SET @run_ts := NOW(6);
+CREATE SCHEMA IF NOT EXISTS silver_dw;
 
--- Optional: record pipeline start (Bronze full load)
-INSERT INTO control_dw.etl_pipeline_log (run_id, layer_name, step_name, status, start_ts)
-VALUES (@run_id, 'BRONZE', 'load_bronze_full', 'STARTED', @run_ts);
+-- ============================================================================
+-- 1) SILVER - CRM_CUST_INFO
+--    Source: bronze_dw.crm_cust_info
+--    Grain: 1 row = 1 customer (cst_id)
+-- ============================================================================
 
--- ----------------------------------------------------------------------------
--- CRM_CUST_INFO
--- ----------------------------------------------------------------------------
-TRUNCATE TABLE bronze_dw.crm_cust_info;
+DROP TABLE IF EXISTS silver_dw.crm_cust_info;
+CREATE TABLE silver_dw.crm_cust_info (
+  -- Business key
+  cst_id              INT          NOT NULL,           -- customer id from source CRM
+  cst_key             VARCHAR(50)  NULL,              -- natural/business key if available
 
-LOAD DATA LOCAL INFILE '/ABSOLUTE/PATH/TO/datasets/source_crm/cust_info.csv'
-INTO TABLE bronze_dw.crm_cust_info
-FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(cst_id, cst_key, cst_firstname, cst_lastname, cst_marital_status, cst_gndr, @cst_create_date)
-SET
-  cst_create_date = NULLIF(@cst_create_date, '0000-00-00'),
-  ingestion_ts    = @run_ts;
+  -- Attributes
+  cst_firstname       VARCHAR(100) NULL,
+  cst_lastname        VARCHAR(100) NULL,
+  cst_marital_status  VARCHAR(50)  NULL,              -- normalized to 'Single' / 'Married' / 'n/a'
+  cst_gndr            VARCHAR(10)  NULL,              -- 'Male' / 'Female' / 'n/a'
+  cst_create_date     DATE         NULL,              -- business create date from source
 
--- ----------------------------------------------------------------------------
--- CRM_PRD_INFO
--- ----------------------------------------------------------------------------
-TRUNCATE TABLE bronze_dw.crm_prd_info;
+  -- Technical columns for the data warehouse
+  dwh_create_ts       DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_updated_ts     DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                            ON UPDATE CURRENT_TIMESTAMP(6),
+  ingestion_ts        DATETIME(6)  NOT NULL,          -- batch timestamp from Silver load
 
-LOAD DATA LOCAL INFILE '/ABSOLUTE/PATH/TO/datasets/source_crm/prd_info.csv'
-INTO TABLE bronze_dw.crm_prd_info
-FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(prd_id, cat_id, prd_key, prd_nm, prd_cost, prd_line, @prd_start_dt, @prd_end_dt)
-SET
-  prd_start_dt = NULLIF(@prd_start_dt, '0000-00-00'),
-  prd_end_dt   = NULLIF(@prd_end_dt, '0000-00-00'),
-  ingestion_ts = @run_ts;
+  PRIMARY KEY (cst_id)
+);
 
--- ----------------------------------------------------------------------------
--- CRM_SALES_DETAILS
--- ----------------------------------------------------------------------------
-TRUNCATE TABLE bronze_dw.crm_sales_details;
 
-LOAD DATA LOCAL INFILE '/ABSOLUTE/PATH/TO/datasets/source_crm/sales_details.csv'
-INTO TABLE bronze_dw.crm_sales_details
-FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(sls_ord_num, sls_prd_key, sls_cust_id, @sls_order_dt, @sls_ship_dt, @sls_due_dt,
- sls_sales, sls_quantity, sls_price)
-SET
-  sls_order_dt = NULLIF(@sls_order_dt, '0000-00-00'),
-  sls_ship_dt  = NULLIF(@sls_ship_dt,  '0000-00-00'),
-  sls_due_dt   = NULLIF(@sls_due_dt,   '0000-00-00'),
-  ingestion_ts = @run_ts;
+-- ============================================================================
+-- 2) SILVER - CRM_PRD_INFO
+--    Source: bronze_dw.crm_prd_info
+--    Grain: 1 row = 1 product version (prd_id)
+-- ============================================================================
 
--- ----------------------------------------------------------------------------
--- ERP_CUST_AZ12
--- ----------------------------------------------------------------------------
-TRUNCATE TABLE bronze_dw.erp_cust_az12;
+DROP TABLE IF EXISTS silver_dw.crm_prd_info;
+CREATE TABLE silver_dw.crm_prd_info (
+  -- Business key
+  prd_id         INT          NOT NULL,
 
-LOAD DATA LOCAL INFILE '/ABSOLUTE/PATH/TO/datasets/source_erp/cust_az12.csv'
-INTO TABLE bronze_dw.erp_cust_az12
-FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(cid, @bdate, gen)
-SET
-  bdate        = NULLIF(@bdate, '0000-00-00'),
-  ingestion_ts = @run_ts;
+  -- Attributes
+  cat_id         VARCHAR(50)  NULL,
+  prd_key        VARCHAR(50)  NULL,
+  prd_nm         VARCHAR(255) NULL,
+  prd_cost       INT          NULL,
+  prd_line       VARCHAR(50)  NULL,
+  prd_start_dt   DATE         NULL,                   -- business start date
+  prd_end_dt     DATE         NULL,                   -- business end date (NULL = active)
 
--- ----------------------------------------------------------------------------
--- ERP_LOC_A101
--- ----------------------------------------------------------------------------
-TRUNCATE TABLE bronze_dw.erp_loc_a101;
+  -- Technical columns
+  dwh_create_ts  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_updated_ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                            ON UPDATE CURRENT_TIMESTAMP(6),
+  ingestion_ts   DATETIME(6)  NOT NULL,              -- batch timestamp from Silver load
 
-LOAD DATA LOCAL INFILE '/ABSOLUTE/PATH/TO/datasets/source_erp/loc_a101.csv'
-INTO TABLE bronze_dw.erp_loc_a101
-FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(cid, cntry)
-SET
-  ingestion_ts = @run_ts;
+  PRIMARY KEY (prd_id)
+);
 
--- ----------------------------------------------------------------------------
--- ERP_PX_CAT_G1V2
--- ----------------------------------------------------------------------------
-TRUNCATE TABLE bronze_dw.erp_px_cat_g1v2;
 
-LOAD DATA LOCAL INFILE '/ABSOLUTE/PATH/TO/datasets/source_erp/px_cat_g1v2.csv'
-INTO TABLE bronze_dw.erp_px_cat_g1v2
-FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(id, cat, subcat, maintenance)
-SET
-  ingestion_ts = @run_ts;
+-- ============================================================================
+-- 3) SILVER - CRM_SALES_DETAILS
+--    Source: bronze_dw.crm_sales_details
+--    Grain: 1 row = 1 order line (order_number + product)
+-- ============================================================================
 
--- ----------------------------------------------------------------------------
--- Pipeline end (Bronze)
--- ----------------------------------------------------------------------------
-UPDATE control_dw.etl_pipeline_log
-SET status = 'SUCCESS',
-    end_ts = NOW(6)
-WHERE run_id = @run_id
-  AND layer_name = 'BRONZE'
-  AND step_name = 'load_bronze_full'
-  AND status = 'STARTED';
+DROP TABLE IF EXISTS silver_dw.crm_sales_details;
+CREATE TABLE silver_dw.crm_sales_details (
+  -- Business composite key
+  sls_ord_num    VARCHAR(50)  NOT NULL,               -- order number
+  sls_prd_key    VARCHAR(50)  NOT NULL,               -- product number from CRM
+  sls_cust_id    INT          NULL,                   -- customer id
+
+  -- Dates (cleaned: invalid '0000-00-00' handled at load time)
+  sls_order_dt   DATE         NULL,
+  sls_ship_dt    DATE         NULL,
+  sls_due_dt     DATE         NULL,
+
+  -- Measures
+  sls_sales      DECIMAL(18,2) NULL,
+  sls_quantity   INT           NULL,
+  sls_price      DECIMAL(18,2) NULL,
+
+  -- Technical columns
+  dwh_create_ts  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_updated_ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                            ON UPDATE CURRENT_TIMESTAMP(6),
+  ingestion_ts   DATETIME(6)  NOT NULL,              -- batch timestamp from Silver load
+
+  PRIMARY KEY (sls_ord_num, sls_prd_key)
+);
+
+
+-- ============================================================================
+-- 4) SILVER - ERP_CUST_AZ12
+--    Source: bronze_dw.erp_cust_az12
+--    Grain: 1 row = 1 customer (cid) with ERP attributes
+--    Note:
+--      - Business date (bdate) is NOT a create/update date,
+--        so incremental logic uses ingestion_ts instead.
+-- ============================================================================
+
+DROP TABLE IF EXISTS silver_dw.erp_cust_az12;
+CREATE TABLE silver_dw.erp_cust_az12 (
+  -- Business key
+  cid            VARCHAR(50)  NOT NULL,               -- customer id from ERP
+
+  -- Attributes
+  bdate          DATE         NULL,                   -- birthdate (can be NULL)
+  gen            VARCHAR(10)  NULL,                   -- gender from ERP (may conflict with CRM)
+
+  -- Technical columns
+  dwh_create_ts  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_updated_ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                            ON UPDATE CURRENT_TIMESTAMP(6),
+  ingestion_ts   DATETIME(6)  NULL,                   -- pass-through of Bronze ingestion_ts
+
+  PRIMARY KEY (cid)
+);
+
+
+-- ============================================================================
+-- 5) SILVER - ERP_LOC_A101
+--    Source: bronze_dw.erp_loc_a101
+--    Grain: 1 row = 1 customer location (cid)
+--    Note:
+--      - No business dates available, so incremental uses ingestion_ts.
+-- ============================================================================
+
+DROP TABLE IF EXISTS silver_dw.erp_loc_a101;
+CREATE TABLE silver_dw.erp_loc_a101 (
+  -- Business key
+  cid            VARCHAR(50)  NOT NULL,
+
+  -- Attributes
+  cntry          VARCHAR(100) NULL,                   -- country code/text
+
+  -- Technical columns
+  dwh_create_ts  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_updated_ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                            ON UPDATE CURRENT_TIMESTAMP(6),
+  ingestion_ts   DATETIME(6)  NULL,                   -- pass-through of Bronze ingestion_ts
+
+  PRIMARY KEY (cid)
+);
+
+
+-- ============================================================================
+-- 6) SILVER - ERP_PX_CAT_G1V2
+--    Source: bronze_dw.erp_px_cat_g1v2
+--    Grain: 1 row = 1 category mapping (id)
+--    Note:
+--      - No business dates available, so incremental uses ingestion_ts.
+-- ============================================================================
+
+DROP TABLE IF EXISTS silver_dw.erp_px_cat_g1v2;
+CREATE TABLE silver_dw.erp_px_cat_g1v2 (
+  -- Business key
+  id             VARCHAR(50)  NOT NULL,
+
+  -- Attributes
+  cat            VARCHAR(255) NULL,
+  subcat         VARCHAR(255) NULL,
+  maintenance    VARCHAR(255) NULL,
+
+  -- Technical columns
+  dwh_create_ts  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_updated_ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                            ON UPDATE CURRENT_TIMESTAMP(6),
+  ingestion_ts   DATETIME(6)  NULL,                   -- pass-through of Bronze ingestion_ts
+
+  PRIMARY KEY (id)
+);
+
+-- ============================================================================
